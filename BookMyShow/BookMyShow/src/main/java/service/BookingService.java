@@ -1,70 +1,96 @@
 package service;
 
-
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 @Service
 public class BookingService {
+    private static final Logger log = LoggerFactory.getLogger(BookingService.class);
+    private final RedissonClient redisson;
+    private final BookingTransactionService database;
+    private final PaymentWebhookVerifier verifier;
 
-    private final RedissonClient redissonClient;
-    private final BookingTransactionService bookingTransactions;
-
-    public BookingService(RedissonClient redissonClient, BookingTransactionService bookingTransactions) {
-        this.redissonClient = redissonClient;
-        this.bookingTransactions = bookingTransactions;
+    public BookingService(RedissonClient redisson, BookingTransactionService database, PaymentWebhookVerifier verifier) {
+        this.redisson = redisson;
+        this.database = database;
+        this.verifier = verifier;
     }
 
-    public BookingResult holdSeatForFiveMinutes(Long seatId, Long userId) {
-        // Step 1: Create a unique Redis lock key for the seat
-        String lockKey = "lock:seat:" + seatId;
-        RLock lock = redissonClient.getLock(lockKey);
+    public BookingResult holdSeatForFiveMinutes(Long showId, Long seatId, Long userId) {
+        if (seatId == null) { return BookingResult.failed("Seat ID is required"); }
+        return holdSeatsForFiveMinutes(showId, List.of(seatId), userId);
+    }
 
+    public BookingResult holdSeatsForFiveMinutes(Long showId, List<Long> seatIds, Long userId) {
+        if (showId == null || showId <= 0 || userId == null || userId <= 0 || seatIds == null ||
+                seatIds.isEmpty() || seatIds.stream().anyMatch(id -> id == null || id <= 0) ||
+                seatIds.stream().distinct().count() != seatIds.size()) {
+            return BookingResult.failed("A valid show, user and distinct seat IDs are required");
+        }
+        List<RLock> acquired = new ArrayList<>();
         try {
-            // Step 2: Try to acquire the Redis lock
-            // Keep the watchdog active while the database operation runs.
-            boolean isLockAcquired = lock.tryLock(10, TimeUnit.SECONDS);
-
-            if (!isLockAcquired) {
-                return BookingResult.failed("System is busy, please try again.");
+            // Consistent lock order avoids deadlocks between overlapping multi-seat requests.
+            for (Long seatId : seatIds.stream().sorted().toList()) {
+                RLock lock = redisson.getLock("lock:show:" + showId + ":seat:" + seatId);
+                if (!lock.tryLock(10, TimeUnit.SECONDS)) {
+                    return BookingResult.failed("Seats are busy; please retry");
+                }
+                acquired.add(lock);
             }
-
-            // Step 3: Start database processing only after acquiring the lock
-            // With no outer transaction, the separate bean's proxy commits before returning.
-            return bookingTransactions.holdSeat(seatId, userId);
-
+            // With no caller transaction, commit completes before these Redis locks are released.
+            return database.holdSeats(showId, seatIds.stream().sorted().toList(), userId);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            return BookingResult.failed("Transaction was interrupted.");
+            return BookingResult.failed("Booking was interrupted");
+        } catch (BookingException e) {
+            return BookingResult.failed(e.getMessage());
+        } catch (RuntimeException e) {
+            log.error("Seat reservation failed", e);
+            return BookingResult.failed("Seat reservation could not be completed; please retry");
         } finally {
-            // Step 6: Release the Redis lock after all processes are completed
-            if (lock.isHeldByCurrentThread()) {
-                lock.unlock();
+            for (int i = acquired.size() - 1; i >= 0; i--) {
+                try {
+                    RLock lock = acquired.get(i);
+                    if (lock.isHeldByCurrentThread()) { lock.unlock(); }
+                } catch (RuntimeException e) {
+                    log.warn("Could not release a seat lock", e);
+                }
             }
         }
     }
 
-    /**
-     * Idempotent Payment Webhook Handler
-     *
-     * @param idempotencyKey Unique event ID or transaction ID from the payment gateway (e.g., evt_998877)
-     * @param bookingId      The associated booking ID
-     * @param gatewayTxnId   The gateway's transaction reference
-     * @param amount         Total amount paid
-     */
-    public WebhookResult processPaymentWebhookIdempotently(String idempotencyKey,
-                                                           String bookingId,
-                                                           String gatewayTxnId,
-                                                           Double amount)
-    {
-        try
-        {
-            return bookingTransactions.processPayment(idempotencyKey, bookingId, gatewayTxnId, amount);
+    /** Verifies a provider-neutral HMAC-SHA256 signature over the exact JSON bytes. */
+    public WebhookResult processPaymentWebhookIdempotently(String rawJson, String signature) {
+        try {
+            return database.processPayment(verifier.verify(rawJson, signature));
+        } catch (BookingException e) {
+            return WebhookResult.failed(e.getMessage());
+        } catch (DataIntegrityViolationException e) {
+            // Cross-booking event/transaction collisions cannot commit both payments.
+            // Do not attempt recovery queries inside a failed or rollback-only transaction.
+            log.warn("Conflicting payment reference", e);
+            return WebhookResult.failed("Payment reference conflicts with an existing event");
         } catch (RuntimeException e) {
-            // A new transaction rolls back here; a joined transaction is marked rollback-only.
-            return WebhookResult.failed("Error processing payment webhook: " + e.getMessage());
+            log.error("Payment webhook processing failed", e);
+            return WebhookResult.failed("Payment could not be processed; please retry");
+        }
+    }
+
+    public BookingResult cancelBooking(String bookingId, Long userId) {
+        try {
+            return database.cancelBooking(bookingId, userId);
+        } catch (BookingException e) {
+            return BookingResult.failed(e.getMessage());
+        } catch (RuntimeException e) {
+            log.error("Booking cancellation failed", e);
+            return BookingResult.failed("Booking cancellation could not be completed; please retry");
         }
     }
 }

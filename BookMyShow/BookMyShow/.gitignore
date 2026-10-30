@@ -28,3 +28,10 @@ bin/
 
 ### Mac OS ###
 .DS_Store
+
+# Generated builds and local credentials
+**/target/
+.env
+.env.*
+!.env.example
+*.log

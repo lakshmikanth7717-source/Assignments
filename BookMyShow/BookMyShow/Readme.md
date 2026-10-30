@@ -1,187 +1,141 @@
-# BookMyShow Booking Engine
+# BookMyShow booking engine
 
-A Spring Boot service prototype for temporary seat reservations and idempotent payment processing. It uses Redis locks to coordinate seat holds and database transactions to group payment, booking, and seat confirmation updates.
+A Java 17 / Spring Boot 3.2.5 service for show-specific seat holds and authenticated, idempotent payment events. MySQL is the source of truth; Redis coordinates short booking operations. The project provides service methods, a Flyway schema, executable sample data and tests. HTTP controllers and a real payment provider are outside this service-only implementation.
 
-The current implementation provides Java service methods and unit tests. REST controllers, a user interface, and payment gateway integration are not implemented.
+## Project layout
 
-## Technology stack
+The Maven project is rooted at `src/pom.xml`. Run commands below from this directory.
 
-| Component | Technology |
+| Location | Purpose |
 | --- | --- |
-| Language | Java 17 |
-| Application framework | Spring Boot 3.2.5 |
-| Persistence | Spring Data JPA / Hibernate |
-| Database | MySQL |
-| Distributed locking | Redis through Redisson 3.28.0 |
-| Build | Maven |
-| Tests | JUnit 5 and Mockito |
+| src/main/java/entity | Physical layout, show inventory, bookings, allocation history and payments |
+| src/main/java/repo | JPA repositories and conditional inventory updates |
+| service/BookingService | Redis coordination and stable caller-facing responses |
+| service/BookingTransactionService | Database transactions and business rules |
+| service/BookingExpiryService | Scheduled expiry sweep |
+| src/main/resources/db/migration | Authoritative Flyway schema |
+| src/main/resources/sql | Executable sample rows and show-listing query |
+| src/test/java/service/BookingScenarios.java | Shared persistence and concurrency tests |
+| queries.md | P2 query assumption and parameters |
+| REVIEW_FIXES.md | Resolution of all 21 bot comments |
 
-## Project structure
+## Build and verification
 
-```text
-BookMyShow/
-├── Readme.md
-├── entities.md                         # Domain design notes
-├── Tables.pdf                          # Additional database documentation
-└── src/
-    ├── pom.xml                         # Maven project root
-    ├── main/
-    │   ├── java/
-    │   │   ├── main/
-    │   │   │   └── BookMyShowApplication.java
-    │   │   ├── entity/
-    │   │   │   ├── Booking.java
-    │   │   │   ├── Payment.java
-    │   │   │   └── Seat.java
-    │   │   ├── repo/
-    │   │   │   ├── BookingRepository.java
-    │   │   │   ├── PaymentRepository.java
-    │   │   │   └── SeatRepository.java
-    │   │   └── service/
-    │   │       ├── BookingService.java
-    │   │       ├── BookingTransactionService.java
-    │   │       ├── BookingResult.java
-    │   │       └── WebhookResult.java
-    │   └── resources/
-    │       └── V1__create_booking_engine_schema.sql
-    ├── test/java/service/
-    │   ├── BookingServiceTest.java
-    │   └── BookingTransactionIntegrationTest.java
-    └── target/                         # Generated build output
-```
-
-The POM explicitly configures `main/java`, `main/resources`, and `test/java` relative to `src/`. Run the commands below from the repository root, using `-f src/pom.xml`.
-
-## Service behavior
-
-### Hold a seat for five minutes
-
-```java
-BookingResult result = bookingService.holdSeatForFiveMinutes(seatId, userId);
-```
-
-1. Obtain the Redis lock named `lock:seat:<seatId>`, waiting up to 10 seconds.
-2. After acquiring the lock, call the database service, which starts a transaction or joins an existing one.
-3. Conditionally update the seat if its status is `AVAILABLE`, or if it is in `HOLD` and its previous hold has expired.
-4. Set the status to `HOLD`, record the user, and set `heldUntil` to five minutes after the current time.
-5. With no existing caller transaction, commit before releasing the Redis lock. If a caller transaction exists, its completion determines when the changes commit.
-
-Redisson's watchdog maintains the Redis lock while the operation runs. The five-minute reservation is tracked in the database; it is separate from the Redis lock lifetime.
-
-Lock contention, an unavailable seat, and thread interruption produce a failed `BookingResult`. Interruption preserves the thread's interrupted flag. Database failures roll back and propagate to the caller; the lock is released if the current thread still owns it.
-
-Expired holds become eligible for a later hold request. There is no scheduled expiration worker.
-
-### Process a payment callback
-
-```java
-WebhookResult result = bookingService.processPaymentWebhookIdempotently(
-    "evt_998877", "booking-123", "gateway-txn-456", 500.00
-);
-```
-
-The referenced booking and its booking items must already exist. This method does not create a booking or charge a payment method.
-
-Within one transaction, the service:
-
-1. Loads the booking with a pessimistic write lock, serializing callbacks for that booking.
-2. Looks up the payment by its idempotency key.
-3. Rejects a key associated with another booking.
-4. Returns success without further updates for an existing `SUCCESS` or `FAILED` payment, or an already confirmed booking.
-5. Creates or updates the payment ledger with status `SUCCESS`.
-6. Changes the booking status to `CONFIRMED`.
-7. Updates matching `show_seats` through `booking_items`, setting them to `BOOKED` and clearing their lock owner and expiry.
-
-With no existing caller transaction, runtime failures roll back the transaction before a failed `WebhookResult` is returned. If the method joins a caller transaction, a runtime failure marks that shared transaction rollback-only; the caller may receive `UnexpectedRollbackException` when it tries to commit. The SQL design includes a unique constraint on `payments.idempotency_key`; callbacks for different bookings that race to reuse a key may fail that constraint.
-
-Both result types are records with `success()` and `message()` accessors. These methods are service entry points, not HTTP endpoints.
-
-### Transaction propagation
-
-`BookingService` coordinates Redis locking and converts webhook failures into responses. It calls the separate Spring bean `BookingTransactionService`, whose public `holdSeat` and `processPayment` methods use plain `@Transactional`, with the default `REQUIRED` propagation.
-
-When no transaction exists, the database operation starts one and completes its commit or rollback before returning to `BookingService`. This is the current production entry flow: the hold commits before Redis unlock, and webhook errors are caught outside the transactional proxy.
-
-If a transactional caller is introduced, the database service joins that existing transaction. An outer rollback then undoes the hold or payment updates too. A caught runtime failure in the database service still marks the shared transaction rollback-only, so the outer workflow cannot commit its remaining writes.
-
-Joining an outer transaction also defers commit until that outer transaction completes, which can occur after Redis unlock. The separate bean ensures Spring intercepts the calls; it does not create an independent transaction when one already exists.
-
-## Build and test
-
-Install a JDK with Java 17 support and Maven, and configure `JAVA_HOME`. No Maven wrapper is included.
+Install Maven and a JDK supporting Java 17. No Maven wrapper is included.
 
 ```shell
-# Compile, run tests, and build the executable JAR
 mvn -f src/pom.xml clean verify
-
-# Run the service tests only
-mvn -f src/pom.xml -Dtest=service.BookingServiceTest test
 ```
 
-Nine service tests invoke the database service through Spring's annotation-based transaction interceptor, with mocked Redis, repositories, and transaction manager. They do not require running MySQL or Redis instances. They cover:
+The default suite runs the real migration, Hibernate schema validation, actual JPA repositories, JDBC transactions and concurrent requests on H2 in MySQL mode. Its Redis replacement is an explicitly named in-process lock double; it does not claim to test MySQL or live Redis behavior.
 
-- Five-minute expiry and committing before unlocking.
-- Lock contention without database access.
-- Preservation of the interrupted flag.
-- Rollback and lock release after a hold failure.
-- Successful payment processing and booking confirmation.
-- Duplicate callback handling without repeated writes.
-- Rollback after a seat confirmation failure.
-- Rejection of idempotency keys belonging to another booking.
-- Handling commit failures outside the transactional proxy.
+Run the same scenarios against real MySQL 8 and Redis with Docker installed and running:
 
-Four additional integration tests use a Spring application context, real JDBC transactions, and an in-memory H2 database. Repository mocks write event rows through JDBC to verify:
-
-- A standalone seat hold is visible on a separate connection before Redis unlock.
-- A seat hold joins an existing transaction and rolls back when the outer workflow fails.
-- Payment, booking, and seat event rows roll back with an outer workflow.
-- A caught payment failure marks the outer transaction rollback-only and causes `UnexpectedRollbackException` at commit.
-
-Run all 13 tests with `mvn -f src/pom.xml test`. These tests verify transaction boundaries; they do not validate the production JPA mappings, MySQL native SQL, or live Redis integration.
-
-The packaged application is written to:
-
-```text
-src/target/booking-engine-0.0.1-SNAPSHOT.jar
+```shell
+mvn -f src/pom.xml -Preal-integration verify
 ```
 
-## Runtime setup
+This explicit profile fails if Docker is unavailable instead of silently skipping. The GitHub Actions workflow runs this profile on a Docker-capable runner.
 
-Running the application requires MySQL, Redis, connection configuration, and a compatible database schema. No application configuration file or credentials are committed.
+For a larger contention run, set between 2 and 1000 requests:
 
-Before running, resolve the schema differences described below. Then provide configuration through environment variables, for example in PowerShell:
+```shell
+mvn -f src/pom.xml -Preal-integration -Dbooking.test.clients=200 verify
+```
+
+The test measures elapsed time and requires exactly one winner for a shared seat. It makes no hardware-independent throughput claim. Tests also cover database guards without Redis, separate shows, atomic multi-seat rollback, expiry/reassignment, callback races, failed/late payments, signatures, amount validation, database constraints, cancellation and transaction propagation.
+
+## Run locally
+
+Provide MySQL and Redis, or use the development Compose file. For example, in PowerShell:
 
 ```powershell
-$env:SPRING_DATASOURCE_URL = "jdbc:mysql://localhost:3306/booking_engine"
-$env:SPRING_DATASOURCE_USERNAME = "booking_user"
-$env:SPRING_DATASOURCE_PASSWORD = "<your-local-password>"
-$env:SPRING_DATA_REDIS_HOST = "localhost"
-$env:SPRING_DATA_REDIS_PORT = "6379"
-$env:SPRING_JPA_HIBERNATE_DDL_AUTO = "validate"
+$env:DB_PASSWORD = "<your-local-database-password>"
+$env:DB_ROOT_PASSWORD = "<a-different-local-root-password>"
+$env:BOOKING_WEBHOOK_SECRET = "<a-random-shared-signing-secret>"
 
+docker compose up -d --wait
 mvn -f src/pom.xml spring-boot:run
 ```
 
-Alternatively, after packaging:
+Optional variables: `DB_URL`, `DB_USER`, `REDIS_HOST`, `REDIS_PORT`, `BOOKING_EXPIRY_INTERVAL_MS`. Defaults are database `booking_engine` and user `booking`. All application timestamps use UTC. Compose can read a local `.env`; Java still needs its environment variables exported. Never commit real credentials.
 
-```shell
-java -jar src/target/booking-engine-0.0.1-SNAPSHOT.jar
+Flyway creates a fresh schema and Hibernate validates it. The prototype SQL was not an applied Flyway migration and did not match its entities. Use a new development database for this baseline. Do not baseline an incompatible database or delete existing data to force startup; existing installations need a separately reviewed data migration.
+
+The packaged JAR is `src/target/booking-engine-0.0.1-SNAPSHOT.jar`. The entry point is `main.BookMyShowApplication`. Import `src/pom.xml` in IntelliJ, with `src/main/java` and `src/test/java` as the source roots.
+
+## Seat holds
+
+A show ID is required because the same physical seat is sold independently for different shows.
+
+```java
+BookingResult single = bookingService.holdSeatForFiveMinutes(101L, 1001L, 42L);
+BookingResult group = bookingService.holdSeatsForFiveMinutes(
+        101L, List.of(1001L, 1002L), 42L);
 ```
 
-In IntelliJ IDEA, import `src/pom.xml` as the Maven project and use `src/main/java` as the production source root and `src/test/java` as the test source root. The application entry point is `main.BookMyShowApplication`.
+A successful result includes the booking ID, expiry, total and currency. A hold lasts up to five minutes, ending earlier if the show starts.
 
-## Database design and current limitations
+Locks are acquired in ascending seat order using `lock:show:<showId>:seat:<seatId>`. Redisson's watchdog covers the short database operation. The database creates a pending booking, conditionally claims every show-seat and records priced booking items in one transaction. Any failed claim rolls everything back.
 
-[The SQL design](src/main/resources/V1__create_booking_engine_schema.sql) defines `shows`, `seats`, `show_seats`, `bookings`, `booking_items`, and `payments`. Only `Seat`, `Booking`, and `Payment` currently have JPA entities. See [entities.md](entities.md) for the broader domain design.
+Redis is unlocked after the call. The persistent show-seat owner and deadline represent the reservation; Redis is not held for five minutes. Conditional database updates remain the correctness guard if Redis coordination is lost.
 
-The SQL file is a design artifact, not an automatically applied migration: Flyway is not a dependency, and the file is not under `db/migration`.
+Physical seats are unique by screen/row/number. Current inventory is unique by show/seat. Historical items are unique only within their booking, so expiry/cancellation does not permanently prevent rebooking.
 
-The seat model and SQL design need reconciliation before using the service against that schema:
+## Expiry and cancellation
 
-- `Seat` expects `seats.id`, a string `seat_number`, and the columns `status`, `held_by_user_id`, and `held_until`.
-- The SQL defines `seats.seat_id`, an integer `seat_number`, and physical layout fields. It stores reservation state in `show_seats` instead.
-- The hold method updates `seats` using only a seat ID, while payment confirmation updates `show_seats` using booking items. The two operations do not currently share one reservation-state model.
+Expired HOLD rows can be reclaimed immediately, without waiting for the sweep. The sweep runs every 30 seconds by default, locks each expired pending booking, and releases only inventory still owned by that booking. It cannot release a replacement reservation, and repeated sweeps are harmless.
 
-Additional work needed for a complete booking application includes show-specific reservations, booking/item creation, HTTP endpoints, callback authentication, payment amount validation, and checks for booking expiry and current seat ownership before confirmation. Payment amounts are stored as `BigDecimal`, although the current callback method accepts `Double`.
+```java
+BookingResult cancelled = bookingService.cancelBooking(bookingId, userId);
+```
 
-A successful build verifies compilation, unit tests, and packaging. It does not establish that the current schema and service can run together unchanged.
+Only the booking owner can cancel a pending hold. Confirmed bookings require a separate refund/cancellation workflow.
+
+## Payment event contract
+
+```java
+WebhookResult result =
+        bookingService.processPaymentWebhookIdempotently(rawJson, signature);
+```
+
+Example payload, using a booking ID returned by a hold:
+
+```json
+{
+  "idempotencyKey": "evt-123",
+  "bookingId": "the-booking-id",
+  "gatewayTransactionId": "txn-456",
+  "amount": 200.00,
+  "currency": "INR",
+  "outcome": "SUCCESS"
+}
+```
+
+The hexadecimal HMAC-SHA256 signature covers the exact UTF-8 JSON bytes, including whitespace, using `BOOKING_WEBHOOK_SECRET`. Missing configuration fails closed. Verification precedes parsing and database writes. This is a provider-neutral contract: a real adapter must implement that gateway's signing/event protocol. Do not assume compatibility with Stripe, Razorpay or another provider.
+
+Amounts use BigDecimal end-to-end and reject null, negative/out-of-range values and fractional cents. Amount and currency must match the booking. Prices currently use INR.
+
+A booking-row lock serializes its callbacks. Unique event and gateway-transaction constraints prevent cross-booking reuse. A repeated terminal event must match the recorded booking, transaction, amount, currency and outcome. Repeats do not apply changes again. Reference conflicts are rejected after the transactional call has rolled back.
+
+Only SUCCESS can confirm a pending, unexpired booking for an active future show. The exact allocation, user and deadline must match; the conditional confirmation count must equal the expected seat count.
+
+FAILED is recorded without confirming seats and releases the pending booking's own holds. Outcomes are terminal per transaction ID; a new attempt requires a new gateway transaction ID. Contradictory terminal events are rejected.
+
+A valid late SUCCESS, a cancelled booking/show, a lost allocation or an extra successful payment is recorded as REFUND_REQUIRED without taking another user's seats. An external worker/operator must fulfill that obligation; the project does not issue a real refund.
+
+`WebhookResult.success()` means the event was processed, including a decline or refund obligation. Use `paymentApplied()` and `refundRequired()` to distinguish outcomes. Unexpected exception details are logged internally and replaced with stable caller-facing messages.
+
+## Transaction boundary
+
+Database methods live in a separate Spring bean and use plain `@Transactional` with default REQUIRED propagation. Without a caller transaction, commit finishes before Redis unlock and webhook error handling.
+
+An existing caller transaction is joined. Its rollback undoes booking/payment changes; an inner failure can mark it rollback-only; commit can occur after Redis unlock. Keep normal coordinator entry points outside an outer transaction when commit-before-unlock is required. Separate beans alone do not imply independent transactions.
+
+## Schema and submission material
+
+The schema covers venues, screens, movies, shows, seats, show-seat inventory, bookings, booking items and payments. Foreign keys and checks enforce references, allowed states, valid ownership shapes and non-negative amounts.
+
+Optional [sample data](src/main/resources/sql/sample-data.sql) contains executable examples for every table. Import it once into a fresh development schema after migration; it is not loaded automatically in production.
+
+[queries.md](queries.md) explains the executable show-listing query and its assumed P2 scope. The original assignment brief was unavailable, so verify the exact filter/output requirements before submission. [entities.md](entities.md) describes the current model. Tables.pdf is the original reference; the migration is authoritative when names differ.

@@ -1,0 +1,38 @@
+name: Booking engine verification
+
+on:
+  pull_request:
+    paths:
+      - 'BookMyShow/BookMyShow/**'
+      - '.github/workflows/booking-engine.yml'
+  push:
+    paths:
+      - 'BookMyShow/BookMyShow/**'
+      - '.github/workflows/booking-engine.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  mysql-redis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: BookMyShow/BookMyShow
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+          cache-dependency-path: BookMyShow/BookMyShow/src/pom.xml
+      - run: mvn -B -f src/pom.xml -Preal-integration verify
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: booking-test-reports
+          path: |
+            BookMyShow/BookMyShow/src/target/surefire-reports/
+            BookMyShow/BookMyShow/src/target/failsafe-reports/
