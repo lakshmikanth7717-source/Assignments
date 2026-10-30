@@ -17,7 +17,6 @@ The Maven project is rooted at `src/pom.xml`. Run commands below from this direc
 | src/main/resources/sql | Executable sample rows and show-listing query |
 | src/test/java/service/BookingScenarios.java | Shared persistence and concurrency tests |
 | queries.md | P2 query assumption and parameters |
-| REVIEW_FIXES.md | Resolution of all 21 bot comments |
 
 ## Build and verification
 
@@ -35,7 +34,7 @@ Run the same scenarios against real MySQL 8 and Redis with Docker installed and 
 mvn -f src/pom.xml -Preal-integration verify
 ```
 
-This explicit profile fails if Docker is unavailable instead of silently skipping. The GitHub Actions workflow runs this profile on a Docker-capable runner.
+This explicit profile fails if Docker is unavailable instead of silently skipping.
 
 For a larger contention run, set between 2 and 1000 requests:
 
@@ -47,18 +46,16 @@ The test measures elapsed time and requires exactly one winner for a shared seat
 
 ## Run locally
 
-Provide MySQL and Redis, or use the development Compose file. For example, in PowerShell:
+Use an existing MySQL database and Redis instance. Set the connection credentials before starting the service, for example in PowerShell:
 
 ```powershell
 $env:DB_PASSWORD = "<your-local-database-password>"
-$env:DB_ROOT_PASSWORD = "<a-different-local-root-password>"
 $env:BOOKING_WEBHOOK_SECRET = "<a-random-shared-signing-secret>"
 
-docker compose up -d --wait
 mvn -f src/pom.xml spring-boot:run
 ```
 
-Optional variables: `DB_URL`, `DB_USER`, `REDIS_HOST`, `REDIS_PORT`, `BOOKING_EXPIRY_INTERVAL_MS`. Defaults are database `booking_engine` and user `booking`. All application timestamps use UTC. Compose can read a local `.env`; Java still needs its environment variables exported. Never commit real credentials.
+Optional variables: `DB_URL`, `DB_USER`, `REDIS_HOST`, `REDIS_PORT`, `BOOKING_EXPIRY_INTERVAL_MS`. Defaults are database `booking_engine` and user `booking`. All application timestamps use UTC. Export the environment variables for the Java process. Never commit real credentials.
 
 Flyway creates a fresh schema and Hibernate validates it. The prototype SQL was not an applied Flyway migration and did not match its entities. Use a new development database for this baseline. Do not baseline an incompatible database or delete existing data to force startup; existing installations need a separately reviewed data migration.
 
