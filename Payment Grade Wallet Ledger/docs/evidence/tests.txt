@@ -1,0 +1,9 @@
+[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.182 s -- in com.airtribe.wallet.security.BasicAuthenticationFilterTests
+[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 34, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 30.30 s -- in com.airtribe.wallet.service.PromptInjectionServiceTests
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.480 s -- in com.airtribe.wallet.service.TransferServiceStampedeTests
+[INFO] Tests run: 15, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 9.318 s -- in com.airtribe.wallet.service.ReconciliationServiceTests
+[INFO] Tests run: 9, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.676 s -- in com.airtribe.wallet.service.IdempotencyServiceTests
+[INFO] Tests run: 61, Failures: 0, Errors: 0, Skipped: 0
+[INFO] BUILD SUCCESS
+[INFO] Total time:  01:06 min

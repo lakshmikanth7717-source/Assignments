@@ -1,0 +1,5 @@
+# Only Maven inputs belong in the build context; keep .env and local artifacts out.
+**
+!pom.xml
+!src/
+!src/**

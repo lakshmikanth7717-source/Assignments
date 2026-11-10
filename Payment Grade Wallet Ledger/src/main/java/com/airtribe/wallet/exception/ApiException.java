@@ -1,0 +1,21 @@
+package com.airtribe.wallet.exception;
+
+import org.springframework.http.HttpStatus;
+
+public final class ApiException extends RuntimeException {
+    private final HttpStatus status;
+    private final String code;
+
+    public ApiException(HttpStatus status, String code, String message) {
+        super(message);
+        if (!status.is4xxClientError() && !status.is5xxServerError()) {
+            throw new IllegalArgumentException("An API error requires a 4xx or 5xx status");
+        }
+        this.status = status;
+        this.code = code;
+    }
+
+    public HttpStatus status() { return status; }
+
+    public String code() { return code; }
+}

@@ -1,0 +1,24 @@
+Timing is on.
+BEGIN
+Time: 0.256 ms
+psql:/scripts/seed.sql:5: NOTICE:  relation "seed_batches" already exists, skipping
+ pg_advisory_xact_lock
+-----------------------
+
+(1 row)
+
+Time: 1.256 ms
+CREATE TABLE
+Time: 0.964 ms
+Time: 3.510 ms
+Seed already complete; no rows added.
+DO
+Time: 177.559 ms
+COMMIT
+Time: 0.415 ms
+ users | wallets | transfers | opening_topups
+-------+---------+-----------+----------------
+  1000 |    2000 |    100000 |           2000
+(1 row)
+
+Time: 38.130 ms

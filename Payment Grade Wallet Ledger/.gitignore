@@ -1,0 +1,8 @@
+﻿/target/
+/.idea/
+*.iml
+/.env
+/.local-ca/
+/compose.override.yaml
+/.tools/
+__pycache__/

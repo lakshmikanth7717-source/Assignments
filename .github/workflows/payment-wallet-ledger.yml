@@ -1,0 +1,47 @@
+﻿name: Payment wallet ledger
+on:
+  push:
+    branches: [lakshmikanth/wallet-locking]
+  pull_request:
+    paths:
+      - 'Payment Grade Wallet Ledger/**'
+      - '.github/workflows/payment-wallet-ledger.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: Payment Grade Wallet Ledger
+    steps:
+      - uses: actions/checkout@v4
+      - name: All unit and PostgreSQL integration tests
+        run: docker compose --profile test run --build --name wallet-ci-tests tests
+      - name: Start API and separate background worker
+        run: docker compose up --build -d --wait
+      - name: Seed exact requested scale and prove repeatability
+        run: |
+          docker compose --profile tools run --rm seed
+          docker compose --profile tools run --rm seed
+      - name: End-to-end HTTP demo and two-session isolation lab
+        run: |
+          docker compose --profile tools run --rm demo
+          docker compose --profile tools run --rm isolation
+      - name: Collect reports and service logs
+        if: always()
+        run: |
+          mkdir -p docs/evidence/test-reports
+          docker cp wallet-ci-tests:/workspace/target/surefire-reports docs/evidence/test-reports/ || true
+          docker cp wallet-ci-tests:/workspace/target/failsafe-reports docs/evidence/test-reports/ || true
+          docker compose logs --no-color > docs/evidence/compose.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: wallet-verification
+          path: Payment Grade Wallet Ledger/docs/evidence/
+      - name: Stop services
+        if: always()
+        run: docker compose --profile test down

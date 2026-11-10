@@ -1,0 +1,123 @@
+name: payment-wallet-ledger
+x-application: &application
+  image: payment-wallet-ledger:local
+  build:
+    context: .
+    target: runtime
+  environment: &environment
+    DB_URL: jdbc:postgresql://postgres:5432/wallet
+    DB_USER: wallet
+    DB_PASSWORD: local-demo-only
+    SERVER_ADDRESS: 0.0.0.0
+  depends_on:
+    postgres:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: wallet
+      POSTGRES_USER: wallet
+      POSTGRES_PASSWORD: local-demo-only
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U wallet -d wallet']
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  api:
+    <<: *application
+    environment:
+      <<: *environment
+      WALLET_WORKER_ENABLED: 'false'
+    ports:
+      - '127.0.0.1:${WALLET_API_PORT:-8081}:8080'
+    healthcheck:
+      test: [CMD-SHELL, 'curl -fsS -u admin:user123 http://localhost:8080/health']
+      interval: 3s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  worker:
+    <<: *application
+    environment:
+      <<: *environment
+      SPRING_MAIN_WEB_APPLICATION_TYPE: none
+      WALLET_WORKER_ENABLED: 'true'
+    depends_on:
+      api:
+        condition: service_healthy
+
+  test-db:
+    image: postgres:17-alpine
+    profiles: [test]
+    environment:
+      POSTGRES_DB: wallet_test
+      POSTGRES_USER: wallet
+      POSTGRES_PASSWORD: test-only
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U wallet -d wallet_test']
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  tests:
+    profiles: [test]
+    build:
+      context: .
+      target: tests
+    environment:
+      TEST_DATABASE_URL: jdbc:postgresql://test-db:5432/wallet_test
+      TEST_DATABASE_USER: wallet
+      TEST_DATABASE_PASSWORD: test-only
+    depends_on:
+      test-db:
+        condition: service_healthy
+
+  seed:
+    image: postgres:17-alpine
+    profiles: [tools]
+    environment:
+      PGPASSWORD: local-demo-only
+    volumes:
+      - ./scripts:/scripts:ro
+    command: [psql, -h, postgres, -U, wallet, -d, wallet, -v, ON_ERROR_STOP=1, -f, /scripts/seed.sql]
+    depends_on:
+      api:
+        condition: service_healthy
+
+  demo:
+    image: python:3.12-slim
+    profiles: [tools]
+    working_dir: /workspace
+    volumes:
+      - ./scripts:/workspace/scripts:ro
+      - ./docs/evidence:/workspace/docs/evidence
+    command: [python, scripts/demo.py]
+    depends_on:
+      api:
+        condition: service_healthy
+      worker:
+        condition: service_started
+
+  isolation:
+    image: python:3.12-slim
+    profiles: [tools]
+    working_dir: /workspace
+    volumes:
+      - ./scripts:/workspace/scripts:ro
+      - ./docs/evidence:/workspace/docs/evidence
+    command: [sh, -c, 'pip install --quiet psycopg[binary]==3.2.6 && python scripts/isolation.py']
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:

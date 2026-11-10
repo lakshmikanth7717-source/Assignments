@@ -1,0 +1,60 @@
+Timing is on.
+BEGIN
+Time: 0.545 ms
+ pg_advisory_xact_lock
+-----------------------
+
+(1 row)
+
+Time: 1.306 ms
+CREATE TABLE
+Time: 11.540 ms
+Time: 2.653 ms
+DO
+Time: 14.560 ms
+INSERT 0 999
+Time: 10.047 ms
+SELECT 1000
+Time: 4.872 ms
+INSERT 0 2000
+Time: 156.421 ms
+SELECT 2000
+Time: 26.470 ms
+SELECT 2000
+Time: 271.223 ms
+INSERT 0 2000
+Time: 70.171 ms
+INSERT 0 2000
+Time: 287.714 ms
+INSERT 0 2000
+Time: 263.284 ms
+UPDATE 2000
+Time: 234.059 ms
+INSERT 0 2000
+Time: 66.647 ms
+SELECT 100000
+Time: 15852.699 ms (00:15.853)
+INSERT 0 100000
+Time: 5611.017 ms (00:05.611)
+INSERT 0 100000
+Time: 18122.384 ms (00:18.122)
+INSERT 0 100000
+Time: 16297.095 ms (00:16.297)
+UPDATE 100000
+Time: 16949.889 ms (00:16.950)
+INSERT 0 100000
+Time: 4474.851 ms (00:04.475)
+UPDATE 2000
+Time: 167.488 ms
+INSERT 0 1
+Time: 0.890 ms
+DO
+Time: 341.247 ms
+COMMIT
+Time: 16.524 ms
+ users | wallets | transfers | opening_topups
+-------+---------+-----------+----------------
+  1000 |    2000 |    100000 |           2000
+(1 row)
+
+Time: 60.872 ms
