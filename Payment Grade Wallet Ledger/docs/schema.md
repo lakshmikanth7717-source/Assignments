@@ -67,7 +67,7 @@ erDiagram
     USERS ||--o{ WALLETS : owns
     USERS ||--o{ TRANSACTIONS : initiates
     USERS ||--o{ IDEMPOTENCY_KEYS : scopes
-    USERS ||--o{ RECONCILIATION_RUNS : requests
+    USERS o|--o{ RECONCILIATION_RUNS : requests
     USERS ||--o{ TRANSFER_RISK_DECISIONS : decides
     USERS o|--o{ TRANSFER_HOLDS : releases
     WALLETS ||--o{ TRANSACTIONS : starts
