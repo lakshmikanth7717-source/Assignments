@@ -1,0 +1,142 @@
+@base = http://localhost:8080/api
+@token = paste-access-token-here
+@projectId = paste-project-id-here
+@taskId = paste-task-id-here
+@inviteCode = paste-invite-code-here
+@memberId = paste-registered-user-id-here
+@commentId = paste-comment-id-here
+@attachmentId = paste-attachment-id-here
+
+### Health
+GET {{base}}/health
+
+### Register (copy accessToken into @token)
+POST {{base}}/auth/register
+Content-Type: application/json
+
+{"email":"alex@example.com","name":"Alex","password":"a-long-example-password"}
+
+### Login
+POST {{base}}/auth/login
+Content-Type: application/json
+
+{"email":"alex@example.com","password":"a-long-example-password"}
+
+### Profile
+GET {{base}}/users/me
+Authorization: Bearer {{token}}
+
+### Update profile
+PATCH {{base}}/users/me
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{"name":"Alex Morgan"}
+
+### Create project (copy id into @projectId)
+POST {{base}}/projects
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{"name":"Launch","description":"Product launch"}
+
+### My projects
+GET {{base}}/projects?page=0&size=20&sort=name,asc
+Authorization: Bearer {{token}}
+
+### Get invitation (owner only)
+GET {{base}}/projects/{{projectId}}/invitation
+Authorization: Bearer {{token}}
+
+### Join project (use another user's token)
+POST {{base}}/projects/join
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{"inviteCode":"{{inviteCode}}"}
+
+### Add existing user (owner only)
+POST {{base}}/projects/{{projectId}}/members
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{"email":"sam@example.com"}
+
+### List members
+GET {{base}}/projects/{{projectId}}/members
+Authorization: Bearer {{token}}
+
+### Create task (copy id into @taskId)
+POST {{base}}/projects/{{projectId}}/tasks
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{"title":"Prepare release notes","description":"Draft announcement","status":"TODO","priority":"HIGH","dueDate":"2026-12-01"}
+
+### Filter, search, and sort
+GET {{base}}/tasks?projectId={{projectId}}&status=TODO&q=release&sort=dueDate,asc&page=0&size=20
+Authorization: Bearer {{token}}
+
+### Read task (use its current version when updating)
+GET {{base}}/tasks/{{taskId}}
+Authorization: Bearer {{token}}
+
+### Replace editable fields and assign (replace version with the latest value)
+PUT {{base}}/tasks/{{taskId}}
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{"title":"Prepare release notes","description":"Draft announcement","status":"IN_PROGRESS","priority":"HIGH","dueDate":"2026-12-01","assigneeId":"{{memberId}}","version":0}
+
+### Add comment
+POST {{base}}/tasks/{{taskId}}/comments
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{"body":"Draft ready for review."}
+
+### List comments
+GET {{base}}/tasks/{{taskId}}/comments
+Authorization: Bearer {{token}}
+
+### Edit own comment
+PUT {{base}}/tasks/{{taskId}}/comments/{{commentId}}
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{"body":"Draft reviewed and approved."}
+
+### Upload a small example attachment
+POST {{base}}/tasks/{{taskId}}/attachments
+Authorization: Bearer {{token}}
+Content-Type: multipart/form-data; boundary=task-file-boundary
+
+--task-file-boundary
+Content-Disposition: form-data; name="file"; filename="notes.txt"
+Content-Type: text/plain
+
+Release notes draft.
+--task-file-boundary--
+
+### List attachments
+GET {{base}}/tasks/{{taskId}}/attachments
+Authorization: Bearer {{token}}
+
+### Download attachment
+GET {{base}}/tasks/{{taskId}}/attachments/{{attachmentId}}
+Authorization: Bearer {{token}}
+
+### Delete own attachment
+DELETE {{base}}/tasks/{{taskId}}/attachments/{{attachmentId}}
+Authorization: Bearer {{token}}
+
+### Remove member or leave project
+DELETE {{base}}/projects/{{projectId}}/members/{{memberId}}
+Authorization: Bearer {{token}}
+
+### Change password (all existing tokens become invalid; log in again)
+PUT {{base}}/users/me/password
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{"currentPassword":"a-long-example-password","newPassword":"a-different-long-password"}
